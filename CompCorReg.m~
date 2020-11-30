@@ -1,0 +1,118 @@
+%% CompCor regression method: a noise ROI (voxels with high tSTD) can be used to model physiological fluctuations in gray matter regions
+
+function rCompCor=CompCorReg(MAG,dMAG)
+
+% 1.Compute tSTD Mask
+tSTD_MAG=zeros(size(MAG,3),size(MAG,1),size(MAG,2));
+tSTDmask_MAG=zeros(size(MAG,3),size(MAG,1),size(MAG,2));
+b=zeros(size(MAG,3),2);
+newMAGCompCor=zeros(size(MAG,1),size(MAG,2),size(MAG,3), size(MAG,4));
+
+Trow=[];
+Tcol=[];
+for slice=1:size(MAG,3)
+    tSTD_MAG(slice,:,:)=std(dMAG(:,:,slice,:),[],4);
+    %threshold of 30% of the maximum tSTD value
+    tSTD_MAGSlc(:,:)=squeeze(tSTD_MAG(slice,:,:));
+    [row,col]=find(tSTD_MAGSlc(:,:)<(max(tSTD_MAGSlc(:))*0.30));
+    Trow{slice}=row';
+    Tcol{slice}=col';
+    tSTDmask_MAG(slice,:,:)=squeeze(tSTD_MAG(slice,:,:));
+end 
+clear slice 
+for slice=1:size(MAG,3)
+    rowSlc=cell2mat(Trow(slice));
+    colSlc=cell2mat(Tcol(slice));
+    for r=1:length(rowSlc)
+        tSTDmask_MAG(slice,rowSlc(r),colSlc(r))=0;
+    end     
+end  
+        
+clear slice
+Trow2=[];
+Tcol2=[];
+for slice=1:size(MAG,3)
+    tSTDmask_MAGSlc(:,:)=squeeze(tSTDmask_MAG(slice,:,:));
+    [row2,col2]=find(tSTDmask_MAGSlc);
+    Trow2{slice}=row2';
+    Tcol2{slice}=col2';
+end 
+
+clear slice
+timeSeriesTotal=[];
+for slice=1:size(MAG,3)
+    row2Slc=cell2mat(Trow2(slice));
+    col2Slc=cell2mat(Tcol2(slice));
+    timeSeries=zeros(length(row2Slc),size(MAG,4));
+    for i=1:length(row2Slc)
+        timeSeries(i,:)=squeeze(dMAG(row2Slc(i),col2Slc(i),slice,:));
+        timeSeriesTotal{slice}=timeSeries;
+    end  
+end
+
+% Applying SVD on the timeSeries of the chosen voxels
+clear slice
+TV=zeros(size(MAG,3),size(MAG,4),size(MAG,4));
+for slice=1:size(MAG,3)
+    timeSeriesSlc=cell2mat(timeSeriesTotal(slice));
+    [~,SVDMatrix,V]=svd(timeSeriesSlc);
+    TV(slice,:,:)=V;
+    lambda=diag(SVDMatrix); 
+    variances{slice}=lambda.*lambda;
+    PCs=10;
+    VV=V(:,1:PCs);
+    VVT{slice}=VV;
+    Y=cell2mat(VVT(slice))'*timeSeriesSlc';
+    XX=cell2mat(VVT(slice))*Y;
+    TXX{slice}=XX';
+    TXXSlc=cell2mat(TXX(slice)');
+    rCompCor(slice,:)=TXXSlc(1,:);
+    clear SVDMatrix;
+end 
+%% Regress out the PCA of the timeSeries of the chosen voxels
+clear slice
+% for slice=1:size(dMAG,3)
+%  X=[detrend(squeeze(rCompCor(slice,:))); ones(1,size(MAG,4))];
+%  pinvX=pinv(X);
+%     for i=1:size(dMAG,1)
+%         for j=1:size(MAG,2)
+%             b(slice,:)=pinvX'*squeeze(dMAG(i,j,slice,:));
+%             newMAGCompCor(i,j,slice,:)=(squeeze(detrend(dMAG(i,j,slice,:)))-b(slice,1)*X(1,:))+pi;
+%         end  
+%     end 
+% end  
+
+for slice=1:size(dMAG,3)
+ X=[detrend(squeeze(rCompCor(slice,:))); ones(1,size(MAG,4))];
+ pinvX=pinv(X);
+    for i=1:size(dMAG,1)
+        for j=1:size(MAG,2)
+            b(slice,:)=pinvX'*squeeze(dMAG(i,j,slice,:));
+            dummy(i,j,slice,:)=(squeeze(detrend(dMAG(i,j,slice,:)))-b(slice,1)*X(1,:))+pi;
+            newMAGCompCor(i,j,slice,:)=mean(dMAG(i,j,slice,:),4)+dummy(i,j,slice,:);
+        end  
+    end 
+end 
+
+%% figures to check
+
+
+for slice=1:size(MAG,3)
+    figure(slice)
+    bar(cell2mat(variances(slice)));
+end 
+
+% figure
+% for slice=1:size(MAG,3)
+%     TXXSlc=cell2mat(TXX(slice)');
+%     plot(squeeze(TXXSlc(1,:)));
+%     hold on
+% end 
+
+clear i j slice
+figure
+for slice=1:size(MAG,3)
+    plot(squeeze(rCompCor(slice,:)));
+    hold all
+end 
+
